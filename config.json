@@ -1,0 +1,23 @@
+{
+    "user": {
+        "first_name": "myname",
+        "last_name": "frmpy",
+        "email": "testfrmpy@gmail.com"
+    },
+    "schedule": {
+        "times": [
+            "10:00",
+            "12:00",
+            "14:00",
+            "16:00",
+            "18:00"
+        ]
+    },
+    "urls": {
+        "default": "https://www.signupgenius.com/go/10C054DA9A722A3F8C34-55555434-pantry#/"
+    },
+    "settings": {
+        "headless": false,
+        "stop_after_success": true
+    }
+}
