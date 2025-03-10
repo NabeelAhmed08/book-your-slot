@@ -163,6 +163,15 @@ def setup_driver(headless=True):
         chrome_options.add_argument('--no-sandbox')
         chrome_options.add_argument('--disable-dev-shm-usage')
         
+        # Add SSL error handling options
+        chrome_options.add_argument('--ignore-certificate-errors')
+        chrome_options.add_argument('--ignore-ssl-errors')
+        chrome_options.add_argument('--allow-insecure-localhost')
+        chrome_options.add_experimental_option('excludeSwitches', ['enable-logging'])
+        
+        prefs = {"profile.managed_default_content_settings.images": 2}
+        chrome_options.add_experimental_option("prefs", prefs)
+        
         if headless:
             chrome_options.add_argument('--headless=new')
         
@@ -179,6 +188,8 @@ def setup_driver(headless=True):
             # Alternative setup that worked in test_browser
             driver = webdriver.Chrome(options=chrome_options)
         
+        # Set page load timeout
+        #driver.set_page_load_timeout(30)
         driver.implicitly_wait(10)
         logger.info("WebDriver setup successful")
         return driver
@@ -229,8 +240,7 @@ def check_for_new_link(url="https://uwm.edu/food-pantry/", headless=True, skip_c
             try:
                 link_text = link.text.strip()
                 link_href = link.get_attribute('href')
-                
-                if expected_text.lower() in link_text.lower() and 'signupgenius.com' in link_href.lower():
+                if  'signupgenius.com' in link_href.lower():
                     logger.info(f"Found matching signup link: {link_href}")
                     return link_href
             except Exception as e:
@@ -275,13 +285,37 @@ def register_for_slot(signup_url, first_name, last_name, email, headless=False):
         
         # Click the initial signup button using exact xpath
         logger.info("Clicking initial signup button")
-        wait = WebDriverWait(driver, 20)
-        initial_button = wait.until(
-            EC.element_to_be_clickable((
-                By.XPATH, "//div[@id='411542055-733063916-details']/div/div/signup-button/button"
+        wait = WebDriverWait(driver, 5)
+        # Find all signup buttons and click the second one (index 1)
+        signup_buttons = wait.until(
+            EC.presence_of_all_elements_located((
+            By.XPATH, "//div/div/div/signup-button/button"
             ))
         )
-        initial_button.click()
+        logger.info("Looking for available signup button")
+        wait = WebDriverWait(driver, 5)
+        signup_buttons = wait.until(
+            EC.presence_of_all_elements_located((
+            By.XPATH, "//div/div/div/signup-button/button"
+            ))
+        )
+        
+        # Try each signup button until finding one that's enabled
+        button_clicked = False
+        for button in signup_buttons:
+            try:
+                if button.is_enabled() and button.is_displayed():
+                    logger.info("Found enabled signup button")
+                    wait.until(EC.element_to_be_clickable(button)).click()
+                    button_clicked = True
+                    break
+            except Exception as e:
+                logger.debug(f"Button not clickable, trying next one: {str(e)}")
+                continue
+                
+        if not button_clicked:
+            logger.error("No enabled signup buttons found")
+            raise NoSuchElementException("No enabled signup buttons available")
         
         # Click the confirmation button
         logger.info("Clicking confirmation button")
