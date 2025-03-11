@@ -32,8 +32,9 @@ DEFAULT_CONFIG = {
         "default": "https://uwm.edu/food-pantry/"
     },
     "settings": {
-        "headless": True,
-        "stop_after_success": True
+        "headless": False,
+        "stop_after_success": True,
+        "skip_check": False
     }
 }
 
@@ -113,7 +114,8 @@ def update_config(
     times: Optional[list[str]] = None,
     default_url: Optional[str] = None,
     headless: Optional[bool] = None,
-    stop_after_success: Optional[bool] = None
+    stop_after_success: Optional[bool] = None,
+    skip_check: Optional[bool] = None
 ) -> bool:
     """
     Update specific fields in the configuration.
@@ -126,6 +128,7 @@ def update_config(
         default_url (Optional[str]): Default URL to check
         headless (Optional[bool]): Run browsers in headless mode
         stop_after_success (Optional[bool]): Stop automation after successful registration
+        skip_check (Optional[bool]): Skip URL check for direct SignUpGenius URLs
         
     Returns:
         bool: True if successful, False otherwise
@@ -147,6 +150,8 @@ def update_config(
             config["settings"]["headless"] = headless
         if stop_after_success is not None:
             config["settings"]["stop_after_success"] = stop_after_success
+        if skip_check is not None:
+            config["settings"]["skip_check"] = skip_check
             
         return save_config(config)
     except Exception as e:
@@ -292,14 +297,12 @@ def register_for_slot(signup_url, first_name, last_name, email, headless=False):
             By.XPATH, "//div/div/div/signup-button/button"
             ))
         )
-        logger.info("Looking for available signup button")
-        wait = WebDriverWait(driver, 5)
-        signup_buttons = wait.until(
-            EC.presence_of_all_elements_located((
-            By.XPATH, "//div/div/div/signup-button/button"
-            ))
-        )
         
+        if not signup_buttons:
+            logger.error("No signup buttons found on page")
+            stop_event.set()  # Set stop event to exit automation
+            return False
+
         # Try each signup button until finding one that's enabled
         button_clicked = False
         for button in signup_buttons:
@@ -314,9 +317,10 @@ def register_for_slot(signup_url, first_name, last_name, email, headless=False):
                 continue
                 
         if not button_clicked:
-            logger.error("No enabled signup buttons found")
-            raise NoSuchElementException("No enabled signup buttons available")
-        
+            logger.error("No enabled signup buttons found - slots may be full")
+            stop_event.set()  # Set stop event to exit automation
+            return False
+
         # Click the confirmation button
         logger.info("Clicking confirmation button")
         confirm_button = wait.until(
@@ -361,12 +365,15 @@ def register_for_slot(signup_url, first_name, last_name, email, headless=False):
         
     except TimeoutException as e:
         logger.error(f"Timeout while registering: {str(e)}")
+        stop_event.set()  # Set stop event to exit automation
         return False
     except NoSuchElementException as e:
         logger.error(f"Required element not found: {str(e)}")
+        stop_event.set()  # Set stop event to exit automation
         return False
     except Exception as e:
         logger.error(f"Unexpected error during registration: {str(e)}")
+        stop_event.set()  # Set stop event to exit automation
         return False
     finally:
         if driver:
@@ -378,7 +385,8 @@ def register_for_slot(signup_url, first_name, last_name, email, headless=False):
             except Exception as e:
                 logger.error(f"Error closing browser: {str(e)}")
 
-def job(first_name: str, last_name: str, email: str, url: Optional[str] = None, skip_check: bool = False) -> None:
+def job(first_name: str, last_name: str, email: str, url: Optional[str] = None, 
+        skip_check: bool = False, headless: Optional[bool] = None) -> None:
     """
     Main job function that checks for new links and attempts registration.
     
@@ -388,6 +396,7 @@ def job(first_name: str, last_name: str, email: str, url: Optional[str] = None, 
         email (str): User's email address
         url (Optional[str]): Optional specific URL to check or direct SignUpGenius URL
         skip_check (bool): Skip checking for signup links if True
+        headless (Optional[bool]): Override config headless setting
     """
     try:
         if stop_event.is_set():
@@ -396,35 +405,35 @@ def job(first_name: str, last_name: str, email: str, url: Optional[str] = None, 
         logger.info("Starting scheduled job execution")
         config = load_config()
         
+        # Use provided headless setting or fall back to config
+        use_headless = headless if headless is not None else config["settings"]["headless"]
+        
         signup_link = None
-        # If URL is a direct SignUpGenius link, use it directly
         if url and 'signupgenius.com' in url.lower():
             logger.info("Using provided SignUpGenius URL directly")
             signup_link = url
         else:
-            # Check for new signup link
             check_url = url or config["urls"]["default"]
             signup_link = check_for_new_link(
                 check_url, 
-                headless=config["settings"]["headless"],
+                headless=use_headless,  # Use determined headless setting
                 skip_check=skip_check
             )
         
         if signup_link:
             logger.info(f"Found new signup link: {signup_link}")
             
-            # Attempt registration
+            # Attempt registration with determined headless setting
             success = register_for_slot(
                 signup_url=signup_link,
                 first_name=first_name,
                 last_name=last_name,
                 email=email,
-                headless=config["settings"]["headless"]
+                headless=use_headless  # Use determined headless setting
             )
             
             if success:
                 logger.info("Successfully registered for slot!")
-                # Stop the automation if configured to do so
                 if config["settings"]["stop_after_success"]:
                     logger.info("Stopping automation after successful registration")
                     stop_event.set()
@@ -434,21 +443,28 @@ def job(first_name: str, last_name: str, email: str, url: Optional[str] = None, 
             logger.info("No new signup link found")
             
     except Exception as e:
-        logger.error(f"Error in job execution: {str(e.with_traceback)}")
+        logger.error(f"Error in job execution: {str(e)}")
 
 def scheduler_thread(first_name: str, last_name: str, email: str, times: Optional[list[str]] = None, skip_check: bool = False):
     """
-    Main scheduler thread function that runs immediately and then schedules for Mondays
+    Main scheduler thread function that schedules jobs for configured times on Mondays
     """
     config = load_config()
-    schedule_times = times or config["schedule"]["times"]
+    scheduled_times = times or config["schedule"]["times"]
     
-    # Run once immediately
-    logger.info("Running initial check immediately...")
-    job(first_name, last_name, email, skip_check=skip_check)
+    # Run once immediately if it's Monday and between 9:20 AM and 10:00 AM
+    now = datetime.datetime.now()
+    if now.weekday() == 0:  # Monday
+        current_time = now.time()
+        start_time = datetime.time(9, 20)
+        end_time = datetime.time(10, 0)
+        
+        if start_time <= current_time <= end_time:
+            logger.info("Running initial check as we're in the registration window...")
+            job(first_name, last_name, email, skip_check=skip_check)
     
-    # Set up schedule for future Mondays
-    for time_str in schedule_times:
+    # Schedule jobs for all configured times
+    for time_str in scheduled_times:
         schedule.every().monday.at(time_str).do(
             job, first_name=first_name, last_name=last_name, email=email, skip_check=skip_check
         )
@@ -471,7 +487,7 @@ def scheduler_thread(first_name: str, last_name: str, email: str, times: Optiona
                 pass
             break
             
-        time.sleep(1)  # More responsive checking
+        time.sleep(1)
     
     logger.info("Scheduler thread exiting")
 
