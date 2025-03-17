@@ -19,7 +19,7 @@
         "default": "http://127.0.0.1:5500/index.html"
     },
     "settings": {
-        "headless": false,
+        "headless": true,
         "stop_after_success": true,
         "skip_check": false
     }

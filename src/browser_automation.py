@@ -59,7 +59,7 @@ def setup_driver(headless=True):
         raise
 
 
-def check_for_new_link(url="https://uwm.edu/food-pantry/", headless=True, skip_check=False):
+def check_for_new_link(url="https://uwm.edu/deanofstudents/assistance/food-pantry/", headless=True, skip_check=False):
     """
     Check for new SignUpGenius links on the UWM food pantry page.
     

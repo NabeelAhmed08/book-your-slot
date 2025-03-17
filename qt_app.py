@@ -1,8 +1,9 @@
 from PyQt6.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, 
                            QHBoxLayout, QLabel, QLineEdit, QCheckBox, QPushButton, 
-                           QFrame, QFormLayout, QComboBox, QTimeEdit)
+                           QFrame, QFormLayout, QComboBox, QTimeEdit, QSystemTrayIcon,
+                           QMenu)
 from PyQt6.QtCore import Qt, QThread, pyqtSignal, QTime
-from PyQt6.QtGui import QFont, QPalette, QColor, QIcon
+from PyQt6.QtGui import QFont, QPalette, QColor, QIcon, QAction
 import sys
 import schedule
 from datetime import datetime, timedelta, time
@@ -10,6 +11,16 @@ from src.scheduler import job, scheduler_thread  # Update import to use src.sche
 from src.config_manager import load_config, update_config  # Update import
 from src.shared_state import stop_event  # Update import
 import os
+
+def get_resource_path(relative_path):
+    """Get absolute path to resource, works for dev and for PyInstaller"""
+    try:
+        # PyInstaller creates a temp folder and stores path in _MEIPASS
+        base_path = sys._MEIPASS
+    except Exception:
+        base_path = os.path.abspath(".")
+    
+    return os.path.join(base_path, relative_path)
 
 class SchedulerThread(QThread):
     status_update = pyqtSignal(str)
@@ -31,11 +42,15 @@ class ModernAutomatorGUI(QMainWindow):
         super().__init__()
         self.config = load_config()
         self.scheduler_thread = None
+        self.icon_path = get_resource_path('icon.ico')
         self.init_ui()
+        self.setup_tray()
         
     def init_ui(self):
-        # Add window icon
-        self.setWindowIcon(QIcon('icon.png'))  # Add an icon file to your project
+        try:
+            self.setWindowIcon(QIcon(self.icon_path))
+        except Exception as e:
+            print(f"Warning: Could not load window icon: {e}")
         
         self.setWindowTitle('Food Pantry Slot Booking')
         self.setMinimumWidth(500)
@@ -214,6 +229,40 @@ class ModernAutomatorGUI(QMainWindow):
         button_layout.addWidget(stop_btn)
         main_layout.addLayout(button_layout)
 
+    def setup_tray(self):
+        """Setup system tray icon and menu"""
+        self.tray_icon = QSystemTrayIcon(self)
+        try:
+            self.tray_icon.setIcon(QIcon(self.icon_path))
+        except Exception as e:
+            print(f"Warning: Could not load tray icon: {e}")
+            # Set a fallback icon or continue without one
+        
+        # Create tray menu
+        tray_menu = QMenu()
+        show_action = QAction("Show", self)
+        quit_action = QAction("Exit", self)
+        show_action.triggered.connect(self.show)
+        quit_action.triggered.connect(self.quit_application)
+        
+        tray_menu.addAction(show_action)
+        tray_menu.addAction(quit_action)
+        
+        self.tray_icon.setContextMenu(tray_menu)
+        self.tray_icon.show()
+        
+        # Connect double click to show window
+        self.tray_icon.activated.connect(self.tray_icon_activated)
+
+    def tray_icon_activated(self, reason):
+        if reason == QSystemTrayIcon.ActivationReason.DoubleClick:
+            self.show()
+            self.window().showNormal()
+
+    def quit_application(self):
+        self.stop_automation()
+        QApplication.quit()
+
     def get_next_run_text(self):
         """Get text showing next scheduled run based on configured day and time"""
         today = datetime.now()
@@ -281,8 +330,18 @@ class ModernAutomatorGUI(QMainWindow):
         self.status_label.setText("Automation stopped")
 
     def closeEvent(self, event):
-        self.stop_automation()
-        event.accept()
+        if self.tray_icon.isVisible():
+            self.hide()
+            self.tray_icon.showMessage(
+                "Book-Your-Slot",
+                "Application minimized to tray. Double-click to restore.",
+                QSystemTrayIcon.MessageIcon.Information,
+                2000
+            )
+            event.ignore()
+        else:
+            self.stop_automation()
+            event.accept()
 
 def main():
     # Set environment variables to handle composition issues
@@ -303,6 +362,7 @@ def main():
     
     window = ModernAutomatorGUI()
     window.show()
+    window.tray_icon.show()
     sys.exit(app.exec())
 
 if __name__ == "__main__":
