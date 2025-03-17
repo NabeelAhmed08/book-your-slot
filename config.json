@@ -1,26 +1,26 @@
 {
     "user": {
-        "first_name": "new test",
-        "last_name": "this",
-        "email": "testthisy@gmail.com"
+        "first_name": "new",
+        "last_name": "test22",
+        "email": "testthisnew@gmail.com"
     },
     "schedule": {
+        "day_of_week": 0,
+        "start_time": "01:22",
+        "end_time": "01:30",
+        "check_interval": 2,
         "times": [
-            "09:20",
             "09:30",
             "09:40",
-            "09:50",
-            "09:55",
-            "09:57",
-            "09:58"
+            "09:50"
         ]
     },
     "urls": {
-        "default": "https://www.signupgenius.com/go/10C054DA9A722A3F8C34-55555434-pantry#/"
+        "default": "http://127.0.0.1:5500/index.html"
     },
     "settings": {
         "headless": false,
         "stop_after_success": true,
-        "skip_check": true
+        "skip_check": false
     }
 }

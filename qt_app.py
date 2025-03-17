@@ -1,13 +1,14 @@
 from PyQt6.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, 
                            QHBoxLayout, QLabel, QLineEdit, QCheckBox, QPushButton, 
-                           QFrame, QFormLayout)
-from PyQt6.QtCore import Qt, QThread, pyqtSignal
+                           QFrame, QFormLayout, QComboBox, QTimeEdit)
+from PyQt6.QtCore import Qt, QThread, pyqtSignal, QTime
 from PyQt6.QtGui import QFont, QPalette, QColor, QIcon
 import sys
 import schedule
-from datetime import datetime, timedelta
-from signupgenius_automator import (load_config, update_config, job, stop_event, 
-                                  save_config)  # Add save_config to imports
+from datetime import datetime, timedelta, time
+from src.scheduler import job, scheduler_thread  # Update import to use src.scheduler
+from src.config_manager import load_config, update_config  # Update import
+from src.shared_state import stop_event  # Update import
 import os
 
 class SchedulerThread(QThread):
@@ -18,18 +19,12 @@ class SchedulerThread(QThread):
         self.config = config
 
     def run(self):
-        for time_str in self.config["schedule"]["times"]:
-            schedule.every().monday.at(time_str).do(
-                job,
-                first_name=self.config["user"]["first_name"],
-                last_name=self.config["user"]["last_name"],
-                email=self.config["user"]["email"],
-                skip_check=self.config["settings"].get("skip_check", True)
-            )
-        
-        while not stop_event.is_set():
-            schedule.run_pending()
-            self.sleep(1)
+        scheduler_thread(
+            first_name=self.config["user"]["first_name"],
+            last_name=self.config["user"]["last_name"],
+            email=self.config["user"]["email"],
+            skip_check=self.config["settings"].get("skip_check", False)
+        )
 
 class ModernAutomatorGUI(QMainWindow):
     def __init__(self):
@@ -39,6 +34,9 @@ class ModernAutomatorGUI(QMainWindow):
         self.init_ui()
         
     def init_ui(self):
+        # Add window icon
+        self.setWindowIcon(QIcon('icon.png'))  # Add an icon file to your project
+        
         self.setWindowTitle('Food Pantry Slot Booking')
         self.setMinimumWidth(500)
         self.setStyleSheet("""
@@ -142,6 +140,44 @@ class ModernAutomatorGUI(QMainWindow):
         settings_frame.setLayout(settings_layout)
         main_layout.addWidget(settings_frame)
 
+        # Schedule Settings Section
+        schedule_frame = QFrame()
+        schedule_frame.setObjectName("section")
+        schedule_layout = QFormLayout()
+        
+        schedule_header = QLabel("Schedule Settings")
+        schedule_header.setObjectName("header")
+        schedule_layout.addRow(schedule_header)
+        
+        # Day of week combo box
+        self.day_combo = QComboBox()
+        self.day_combo.addItems(['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'])
+        self.day_combo.setCurrentIndex(self.config["schedule"].get("day_of_week", 0))
+        schedule_layout.addRow("Check Day:", self.day_combo)
+        
+        # Time window inputs
+        self.start_time = QTimeEdit()
+        self.end_time = QTimeEdit()
+        
+        # Get times from config or use defaults
+        start_time = datetime.strptime(
+            self.config["schedule"].get("start_time", "09:30"), 
+            "%H:%M"
+        ).time()
+        end_time = datetime.strptime(
+            self.config["schedule"].get("end_time", "10:00"), 
+            "%H:%M"
+        ).time()
+        
+        self.start_time.setTime(QTime(start_time.hour, start_time.minute))
+        self.end_time.setTime(QTime(end_time.hour, end_time.minute))
+        
+        schedule_layout.addRow("Start Time:", self.start_time)
+        schedule_layout.addRow("End Time:", self.end_time)
+        
+        schedule_frame.setLayout(schedule_layout)
+        main_layout.addWidget(schedule_frame)
+
         # Status Section
         status_frame = QFrame()
         status_frame.setObjectName("section")
@@ -151,14 +187,14 @@ class ModernAutomatorGUI(QMainWindow):
         status_header.setObjectName("header")
         status_layout.addWidget(status_header)
         
-        self.status_label = QLabel("Not running")
+        self.status_label = QLabel("Ready to start automation")
         self.status_label.setObjectName("status")
         status_layout.addWidget(self.status_label)
         
-        next_monday = self.get_next_monday()
-        next_run = QLabel(f"Next run: {next_monday.strftime('%Y-%m-%d')} at 9:20 AM")
-        next_run.setObjectName("status")
-        status_layout.addWidget(next_run)
+        next_run = self.get_next_run_text()
+        self.next_run_label = QLabel(next_run)
+        self.next_run_label.setObjectName("status")
+        status_layout.addWidget(self.next_run_label)
         
         status_frame.setLayout(status_layout)
         main_layout.addWidget(status_frame)
@@ -178,24 +214,40 @@ class ModernAutomatorGUI(QMainWindow):
         button_layout.addWidget(stop_btn)
         main_layout.addLayout(button_layout)
 
+    def get_next_run_text(self):
+        """Get text showing next scheduled run based on configured day and time"""
+        today = datetime.now()
+        config_day = self.config["schedule"].get("day_of_week", 0)
+        days_ahead = config_day - today.weekday()
+        if days_ahead <= 0:
+            days_ahead += 7
+        next_date = today + timedelta(days=days_ahead)
+        start_time = self.config["schedule"].get("start_time", "09:30")
+        return f"Next run: {next_date.strftime('%Y-%m-%d')} at {start_time}"
+
     def get_next_monday(self):
         today = datetime.now()
         days_ahead = 7 - today.weekday()
         if days_ahead <= 0:
             days_ahead += 7
-        return today + timedelta(days=days_ahead)
+        return today + timedelta(days_ahead)
 
     def save_config(self):
-        # First update the basic settings using update_config
-        update_config(
-            first_name=self.first_name.text(),
-            last_name=self.last_name.text(),
-            email=self.email.text(),
-            headless=self.headless.isChecked(),
-            stop_after_success=self.stop_after_success.isChecked(),
-            skip_check=self.skip_check.isChecked()  # Add skip_check to update_config
-        )
-        self.status_label.setText("Configuration saved successfully!")
+        try:
+            update_config(
+                first_name=self.first_name.text().strip(),
+                last_name=self.last_name.text().strip(),
+                email=self.email.text().strip(),
+                headless=self.headless.isChecked(),
+                stop_after_success=self.stop_after_success.isChecked(),
+                skip_check=self.skip_check.isChecked(),
+                day_of_week=self.day_combo.currentIndex(),
+                start_time=self.start_time.time().toString("HH:mm"),
+                end_time=self.end_time.time().toString("HH:mm")
+            )
+            self.status_label.setText("Configuration saved successfully!")
+        except Exception as e:
+            self.status_label.setText(f"Error saving configuration: {str(e)}")
 
     def start_automation(self):
         if not all([self.first_name.text(), self.last_name.text(), self.email.text()]):
@@ -237,6 +289,13 @@ def main():
     os.environ["QT_QPA_PLATFORM"] = "windows:darkmode=2"
     os.environ["QT_AUTO_SCREEN_SCALE_FACTOR"] = "1"
     os.environ["QT_ENABLE_HIGHDPI_SCALING"] = "1"
+    
+        # Initialize application
+    if hasattr(Qt, 'AA_EnableHighDpiScaling'):
+        QApplication.setAttribute(Qt.AA_EnableHighDpiScaling, True)
+    if hasattr(Qt, 'AA_UseHighDpiPixmaps'):
+        QApplication.setAttribute(Qt.AA_UseHighDpiPixmaps, True)
+    
     
     app = QApplication(sys.argv)
     # Use Qt6 compatible high DPI settings

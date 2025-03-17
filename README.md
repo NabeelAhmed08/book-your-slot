@@ -59,17 +59,39 @@ Create or modify `config.json`:
         "email": "john@example.com"
     },
     "schedule": {
-        "times": ["10:00", "12:00", "14:00", "16:00", "18:00"]
+        "day_of_week": 0,         // 0=Monday through 6=Sunday
+        "start_time": "09:30",    // When to start checking on scheduled day
+        "end_time": "10:00",      // When to stop checking
+        "check_interval": 10,     // Minutes between checks
+        "times": ["09:30"]        // Legacy schedule times
     },
     "urls": {
         "default": "https://www.example.com/signup-page"
     },
     "settings": {
         "headless": true,
-        "stop_after_success": true
+        "stop_after_success": true,
+        "skip_check": false
     }
 }
 ```
+
+### Schedule Settings
+
+The tool now supports more precise scheduling:
+
+- `day_of_week`: Configure which day to run (0=Monday through 6=Sunday)
+- `start_time`: When to begin checking on the scheduled day
+- `end_time`: When to stop checking if no slot is found
+- `check_interval`: Minutes between each check attempt (default: 10)
+
+The automation will:
+1. Run only on the configured day of the week
+2. Start checking at the specified start_time
+3. Check every check_interval minutes until either:
+   - A slot is successfully booked
+   - The end_time is reached
+   - No slots are available
 
 ## Usage
 
